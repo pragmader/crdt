@@ -93,7 +93,7 @@ func (g *Graph) AddVertex(v Vertex) error {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	_, err := g.get(v.Key)
+	_, err := g.lookup(v.Key)
 	if err == nil {
 		return ErrVertexAlreadyExists
 	}
@@ -113,7 +113,7 @@ func (g *Graph) RemoveVertex(key string) (err error) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	_, err = g.get(key)
+	_, err = g.lookup(key)
 	if err != nil {
 		return err
 	}
@@ -130,12 +130,12 @@ func (g *Graph) AddEdge(fromKey, toKey string) error {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	_, err := g.get(fromKey)
+	_, err := g.lookup(fromKey)
 	if err != nil {
 		return err
 	}
 
-	_, err = g.get(toKey)
+	_, err = g.lookup(toKey)
 	if err != nil {
 		return err
 	}
@@ -153,12 +153,12 @@ func (g *Graph) RemoveEdge(fromKey, toKey string) error {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	_, err := g.get(fromKey)
+	_, err := g.lookup(fromKey)
 	if err != nil {
 		return err
 	}
 
-	_, err = g.get(toKey)
+	_, err = g.lookup(toKey)
 	if err != nil {
 		return err
 	}
@@ -169,15 +169,15 @@ func (g *Graph) RemoveEdge(fromKey, toKey string) error {
 	return nil
 }
 
-// Contains checks if a vertex with the given key exists in the graph.
+// Lookup checks if a vertex with the given key exists in the graph.
 // Returns the found vertex and no error if the vertex exists.
 // Returns an error with `ErrVertexNotfound` cause if
 // the vertex with the given key does not exist
-func (g Graph) Contains(key string) (Vertex, error) {
+func (g Graph) Lookup(key string) (Vertex, error) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	return g.get(key)
+	return g.lookup(key)
 }
 
 // FindConnected returns a list of vertices which are connected to the vertex with the given key.
@@ -193,7 +193,7 @@ func (g Graph) FindConnected(key string) (connected []Vertex, err error) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	start, err := g.get(key)
+	start, err := g.lookup(key)
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +218,7 @@ func (g Graph) FindConnected(key string) (connected []Vertex, err error) {
 
 		adjacent := g.getAdjacent(current.Key)
 		for _, v := range adjacent.List() {
-			vertex, err := g.get(v.GetKey())
+			vertex, err := g.lookup(v.GetKey())
 			if errors.Cause(err) == ErrVertexNotFound {
 				return nil, err
 			}
@@ -246,7 +246,7 @@ func (g Graph) FindPath(fromKey, toKey string) (path []Vertex, err error) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	start, err := g.get(fromKey)
+	start, err := g.lookup(fromKey)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +271,7 @@ func (g Graph) FindPath(fromKey, toKey string) (path []Vertex, err error) {
 
 		adjacent := g.getAdjacent(current.Key)
 		for _, v := range adjacent.List() {
-			vertex, err := g.get(v.GetKey())
+			vertex, err := g.lookup(v.GetKey())
 			if errors.Cause(err) == ErrVertexNotFound {
 				return nil, err
 			}
@@ -292,23 +292,23 @@ func (g Graph) FindPath(fromKey, toKey string) (path []Vertex, err error) {
 	}
 }
 
-// Replicate takes another LWW Graph as a `remote` and merges its state into itself.
+// Merge takes another LWW Graph as a `remote` and merges its state into itself.
 // Merging two replicas takes the union of the respective vertices and edges.
-func (g *Graph) Replicate(remote Graph) {
+func (g *Graph) Merge(remote Graph) {
 	// replicating vertices
-	g.vertices.Replicate(remote.vertices)
+	g.vertices.Merge(remote.vertices)
 
 	// replicating edges
 	for vertexKey, remoteAdjacent := range remote.edges {
 		localAdjacent := g.getAdjacent(vertexKey)
-		localAdjacent.Replicate(remoteAdjacent)
+		localAdjacent.Merge(remoteAdjacent)
 	}
 }
 
-// get returns a vertex with the given key.
+// lookup returns a vertex with the given key.
 // Returns an error with `ErrVertexNotfound` cause if the vertex does not exist
-func (g Graph) get(key string) (found Vertex, err error) {
-	foundElement, err := g.vertices.Contains(key)
+func (g Graph) lookup(key string) (found Vertex, err error) {
+	foundElement, err := g.vertices.Lookup(key)
 	if errors.Cause(err) == ErrElementNotFound {
 		return found, errors.Wrapf(ErrVertexNotFound, "failed to find vertex [key = %q]", key)
 	}

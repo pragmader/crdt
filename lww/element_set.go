@@ -60,7 +60,7 @@ type Set struct {
 
 // Add adds the given element to the set.
 // It replaces an existing element if the element key collides.
-func (s *Set) Add(e Element) {
+func (s Set) Add(e Element) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -73,7 +73,7 @@ func (s *Set) Add(e Element) {
 
 // Remove removes an element with the given key from the set.
 // This operation succeeds even if the element does not exist in the set.
-func (s *Set) Remove(key string) {
+func (s Set) Remove(key string) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -81,9 +81,9 @@ func (s *Set) Remove(key string) {
 	s.removals[key] = time.Now()
 }
 
-// Replicate takes another LWW Element Set as a `remote` and merges its state into itself.
+// Merge takes another LWW Element Set as a `remote` and merges its state into itself.
 // Merging two replicas takes the union of their add-sets and remove-sets.
-func (s *Set) Replicate(remote Set) {
+func (s Set) Merge(remote Set) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -104,10 +104,10 @@ func (s *Set) Replicate(remote Set) {
 	}
 }
 
-// Contains checks if an element with the given key exists in the set.
+// Lookup checks if an element with the given key exists in the set.
 // Returns the found element and no error if the element exists.
 // Returns nil and `ErrNotFound` if it does not exist.
-func (s Set) Contains(key string) (Element, error) {
+func (s Set) Lookup(key string) (Element, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -151,5 +151,5 @@ func (s Set) List() (list []Element) {
 // removed returns `true` if the given record is marked as removed
 func (s Set) removed(record addRecord) bool {
 	removedAt, removed := s.removals[record.Element.GetKey()]
-	return removed || removedAt.After(record.Timestamp)
+	return removed && removedAt.After(record.Timestamp)
 }
