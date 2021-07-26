@@ -32,7 +32,11 @@ func (e IDElement) GetKey() string {
 type addRecord struct {
 	// Element is the added element
 	Element Element
-	// Timestamp is when the element was added
+	// Timestamp is when the element was added.
+	// Standard Go `time.Time` type is used, which is quite precise but it's not a strong
+	// timestamp that can be used across nodes. Here it's used just for simplicity and exercise purposes.
+	// It could be improved using a node ID (e.g. MAC) as an additional value for being
+	// more deterministic when timestamps collide.
 	Timestamp time.Time
 }
 

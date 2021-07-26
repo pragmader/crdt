@@ -1,6 +1,7 @@
 package lww
 
 import (
+	"sort"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -14,12 +15,12 @@ var (
 	ErrInvalidVertexType = errors.New("invalid vertex type")
 	// ErrVertexNotFound occurs when trying to access a non existing vertex key
 	ErrVertexNotFound = errors.New("vertex not found")
-	// ErrPathNotFound occurs when there is no path between the given verticies
+	// ErrPathNotFound occurs when there is no path between the given vertices
 	ErrPathNotFound = errors.New("path not found")
 )
 
 // nothing is a type with zero memory allocation.
-// It's used for marking visited verticies in a efficient way.
+// It's used for marking visited vertices in a efficient way.
 type nothing struct{}
 
 // Vertex is a graph vertex that holds a unique key and a value
@@ -33,6 +34,15 @@ type Vertex struct {
 // GetKey implements the `Element` interface
 func (v Vertex) GetKey() string {
 	return v.Key
+}
+
+// VertexWithEdges is a struct that contains a vertex and its adjacent keys.
+// It's used for a flat export of the graph data, so it can be compared in tests for example
+type VertexWithEdges struct {
+	// Vertex itself
+	Vertex
+	// AdjacentKeys is a list of adjacent vertex keys.
+	AdjacentKeys []string
 }
 
 // NewGraph initializes the Last-Writer-Wins state-based graph and makes it ready for use.
@@ -50,7 +60,7 @@ func NewGraph() Graph {
 //
 // The implementation is basically composing two dimensions of LWW sets into a graph data structure:
 // * 1st dimension is a set of vertices
-// * 2nd dimension is a set of edges (adjacent verticies) in each vertex
+// * 2nd dimension is a set of edges (adjacent vertices) in each vertex
 //
 // In this implementation it's possible to have a hanging edge that points to a
 // vertex that have been removed. It's properly handled throughout the code.
@@ -69,7 +79,7 @@ func NewGraph() Graph {
 //   7.1 V1 gets re-added to B
 //   7.2 the edge V1->V2 gets restored in B and replicated to C
 //   7.3 Both B and C now have vertices V1 and V2 and the edge V1->V2
-// 8. A and B (or C) replicate: A now also has verticies V1, V2 and the edge V1->V2 because of LWW
+// 8. A and B (or C) replicate: A now also has vertices V1, V2 and the edge V1->V2 because of LWW
 //
 // Time ->
 // A--AddVertex(V1)-\-RemoveVertex(V1)---------------\----\-|
@@ -89,15 +99,15 @@ type Graph struct {
 
 // AddVertex adds the given vertex `v` to the graph.
 // Returns `ErrVertexAlreadyExists` if a vertex with the same key already exists in the graph.
-func (g *Graph) AddVertex(v Vertex) error {
+func (g Graph) AddVertex(v Vertex) error {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	_, err := g.lookup(v.Key)
+	_, err := g.Lookup(v.Key)
 	if err == nil {
 		return ErrVertexAlreadyExists
 	}
-	if errors.Cause(err) != ErrVertexNotFound {
+	if !errors.Is(err, ErrVertexNotFound) {
 		return err
 	}
 
@@ -109,11 +119,11 @@ func (g *Graph) AddVertex(v Vertex) error {
 // RemoveVertex removes the vertex with the given key.
 // Returns an error with `ErrVertexNotfound` cause if
 // the vertex with the given key does not exist
-func (g *Graph) RemoveVertex(key string) (err error) {
+func (g Graph) RemoveVertex(key string) (err error) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	_, err = g.lookup(key)
+	_, err = g.Lookup(key)
 	if err != nil {
 		return err
 	}
@@ -126,16 +136,16 @@ func (g *Graph) RemoveVertex(key string) (err error) {
 // AddEdge adds a directional edge from a vertex with `fromKey` to a vertex with `toKey`.
 // Returns an error with `ErrVertexNotfound` cause if
 // one of the vertices with the given key does not exist
-func (g *Graph) AddEdge(fromKey, toKey string) error {
+func (g Graph) AddEdge(fromKey, toKey string) error {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	_, err := g.lookup(fromKey)
+	_, err := g.Lookup(fromKey)
 	if err != nil {
 		return err
 	}
 
-	_, err = g.lookup(toKey)
+	_, err = g.Lookup(toKey)
 	if err != nil {
 		return err
 	}
@@ -149,16 +159,16 @@ func (g *Graph) AddEdge(fromKey, toKey string) error {
 // AddEdge removes a directional edge from a vertex with `fromKey` to a vertex with `toKey`.
 // Returns an error with `ErrVertexNotfound` cause if
 // one of the vertices with the given key does not exist
-func (g *Graph) RemoveEdge(fromKey, toKey string) error {
+func (g Graph) RemoveEdge(fromKey, toKey string) error {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	_, err := g.lookup(fromKey)
+	_, err := g.Lookup(fromKey)
 	if err != nil {
 		return err
 	}
 
-	_, err = g.lookup(toKey)
+	_, err = g.Lookup(toKey)
 	if err != nil {
 		return err
 	}
@@ -173,11 +183,22 @@ func (g *Graph) RemoveEdge(fromKey, toKey string) error {
 // Returns the found vertex and no error if the vertex exists.
 // Returns an error with `ErrVertexNotfound` cause if
 // the vertex with the given key does not exist
-func (g Graph) Lookup(key string) (Vertex, error) {
-	g.mutex.Lock()
-	defer g.mutex.Unlock()
+func (g Graph) Lookup(key string) (found Vertex, err error) {
+	// no lock required, we access only `vertices` set and it's thread-safe
+	foundElement, err := g.vertices.Lookup(key)
+	if errors.Is(err, ErrElementNotFound) {
+		return found, errors.Wrapf(ErrVertexNotFound, "failed to find vertex [key = %q]", key)
+	}
+	if err != nil {
+		return found, err
+	}
 
-	return g.lookup(key)
+	switch v := foundElement.(type) {
+	case Vertex:
+		return v, nil
+	default:
+		return found, errors.Wrapf(ErrInvalidVertexType, "vertex [key = %q] is of invalid type", key)
+	}
 }
 
 // FindConnected returns a list of vertices which are connected to the vertex with the given key.
@@ -193,15 +214,18 @@ func (g Graph) FindConnected(key string) (connected []Vertex, err error) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	start, err := g.lookup(key)
+	start, err := g.Lookup(key)
 	if err != nil {
 		return nil, err
 	}
 
+	// it's always at least an empty list
+	connected = []Vertex{}
+
 	// breadth-first traversal
 
-	// a set to mark visited verticies
-	visited := map[string]nothing{start.Key: {}}
+	// a set to mark visited vertices
+	visited := make(map[string]nothing)
 	// the traversal queue for BFS
 	queue := []Vertex{start}
 
@@ -218,8 +242,12 @@ func (g Graph) FindConnected(key string) (connected []Vertex, err error) {
 
 		adjacent := g.getAdjacent(current.Key)
 		for _, v := range adjacent.List() {
-			vertex, err := g.lookup(v.GetKey())
-			if errors.Cause(err) == ErrVertexNotFound {
+			// some edges exist even for removed vertices
+			vertex, err := g.Lookup(v.GetKey())
+			if errors.Is(err, ErrVertexNotFound) {
+				continue
+			}
+			if err != nil {
 				return nil, err
 			}
 
@@ -235,66 +263,113 @@ func (g Graph) FindConnected(key string) (connected []Vertex, err error) {
 	}
 }
 
-// FindPath returns a list of verticies that construct a path between
+// FindPath returns a list of vertices that construct a path between
 // a vertex with the key `fromKey` and a vertex with the key `toKey`.
 //
-// The resulted path does NOT include the "from" and "to" vertices but only
-// the verticies on the path between them.
+// Returns a list of vertices and no error if there is a path from
+// `fromKey` to `toKey`.
+// Returns `nil` and `ErrPathNotFound` when the vertices are not connected.
+//
+// The resulted path always starts with the "from" vertex and ends with the "to" vertex.
+// The path can also start and end with the same vertex if there is a loop on the way.
 //
 // Because of the data internals the result is not guarantied to be deterministic.
 func (g Graph) FindPath(fromKey, toKey string) (path []Vertex, err error) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	start, err := g.lookup(fromKey)
+	start, err := g.Lookup(fromKey)
 	if err != nil {
 		return nil, err
 	}
 
-	// depth-first traversal
-
-	// a set to mark keys of visited verticies
-	visited := map[string]nothing{start.Key: {}}
-
-	// the traversal stack for DFS
-	stack := []Vertex{start}
-
-	for {
-		stackLength := len(stack)
-		if stackLength == 0 {
-			return nil, errors.Wrapf(ErrPathNotFound, "there is no path between vertices [ID = %q] and [ID = %q]", fromKey, toKey)
-		}
-
-		// pop from the DFS stack
-		current := stack[stackLength-1]
-		stack := stack[:stackLength-1]
-
-		adjacent := g.getAdjacent(current.Key)
-		for _, v := range adjacent.List() {
-			vertex, err := g.lookup(v.GetKey())
-			if errors.Cause(err) == ErrVertexNotFound {
-				return nil, err
-			}
-
-			if vertex.Key == toKey {
-				// the path is in the current stack
-				return stack, nil
-			}
-
-			_, toSkip := visited[vertex.Key]
-			if toSkip {
-				continue
-			}
-			visited[vertex.Key] = nothing{}
-
-			stack = append(stack, vertex)
-		}
+	_, err = g.Lookup(toKey)
+	if err != nil {
+		return nil, err
 	}
+
+	// depth-first traversal with path tracing
+
+	// a set to mark keys of visited vertices
+	visited := make(map[string]nothing)
+	path = []Vertex{start}
+
+	return g.findPath(start, toKey, path, visited)
+}
+
+// findPath performs a single recursive iteration of DFS in the `FindPath` function.
+func (g Graph) findPath(start Vertex, searchKey string, currentPath []Vertex, visited map[string]nothing) (path []Vertex, err error) {
+	_, toSkip := visited[start.Key]
+	if toSkip {
+		return nil, ErrPathNotFound
+	}
+	visited[start.Key] = nothing{}
+
+	adjacent := g.getAdjacent(start.Key).List()
+	for _, v := range adjacent {
+		// some edges exist even for removed vertices
+		vertex, err := g.Lookup(v.GetKey())
+		if errors.Is(err, ErrVertexNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if vertex.Key == searchKey {
+			return append(currentPath, vertex), nil
+		}
+
+		path, err = g.findPath(vertex, searchKey, append(currentPath, vertex), visited)
+		if errors.Is(err, ErrPathNotFound) {
+			continue
+		}
+		return path, err
+	}
+
+	return nil, ErrPathNotFound
+}
+
+// List returns a comparable graph representation.
+// This function produces deterministic results.
+func (g Graph) List() (list []VertexWithEdges, err error) {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+
+	list = []VertexWithEdges{}
+
+	vertices := g.vertices.List()
+	sort.Slice(vertices, func(i, j int) bool {
+		return vertices[i].GetKey() < vertices[j].GetKey()
+	})
+
+	for _, element := range vertices {
+		vertex, err := g.Lookup(element.GetKey())
+		if err != nil {
+			return nil, err
+		}
+		adjacent := g.getAdjacent(vertex.Key).List()
+		vwe := VertexWithEdges{
+			Vertex:       vertex,
+			AdjacentKeys: make([]string, 0, len(adjacent)),
+		}
+
+		for _, adjacentKey := range adjacent {
+			vwe.AdjacentKeys = append(vwe.AdjacentKeys, adjacentKey.GetKey())
+		}
+		sort.Strings(vwe.AdjacentKeys)
+
+		list = append(list, vwe)
+	}
+
+	return list, nil
 }
 
 // Merge takes another LWW Graph as a `remote` and merges its state into itself.
 // Merging two replicas takes the union of the respective vertices and edges.
-func (g *Graph) Merge(remote Graph) {
+func (g Graph) Merge(remote Graph) {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+
 	// replicating vertices
 	g.vertices.Merge(remote.vertices)
 
@@ -305,25 +380,6 @@ func (g *Graph) Merge(remote Graph) {
 	}
 }
 
-// lookup returns a vertex with the given key.
-// Returns an error with `ErrVertexNotfound` cause if the vertex does not exist
-func (g Graph) lookup(key string) (found Vertex, err error) {
-	foundElement, err := g.vertices.Lookup(key)
-	if errors.Cause(err) == ErrElementNotFound {
-		return found, errors.Wrapf(ErrVertexNotFound, "failed to find vertex [key = %q]", key)
-	}
-	if err != nil {
-		return found, err
-	}
-
-	switch v := foundElement.(type) {
-	case Vertex:
-		return v, nil
-	default:
-		return found, errors.Wrapf(ErrInvalidVertexType, "vertex [key = %q] is of invalid type", key)
-	}
-}
-
 // getAdjacent returns an LWW Element Set of keys of adjacent vertices.
 // This function also initializes the set of adjacent keys if needed.
 func (g Graph) getAdjacent(vertexKey string) Set {
@@ -331,7 +387,7 @@ func (g Graph) getAdjacent(vertexKey string) Set {
 	// we need to initialize the set
 	edges, edgesExist := g.edges[vertexKey]
 	if !edgesExist {
-		edges := NewSet()
+		edges = NewSet()
 		g.edges[vertexKey] = edges
 	}
 	return edges

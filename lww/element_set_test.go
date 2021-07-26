@@ -1,57 +1,12 @@
 package lww
 
 import (
-	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestSet(t *testing.T) {
-	t.Run("Set operations", func(t *testing.T) {
-
-		key := "hello"
-		element := IDElement(key)
-
-		t.Run("Add/Contains", func(t *testing.T) {
-			t.Run("added element can be retrieved", func(t *testing.T) {
-				s := NewSet()
-				s.Add(element)
-
-				retreived, err := s.Lookup(key)
-				require.NoError(t, err)
-				require.Equal(t, element, retreived)
-			})
-
-			t.Run("cannot retrieve a non-existing element", func(t *testing.T) {
-				s := NewSet()
-
-				element, err := s.Lookup("non-existing")
-				require.ErrorIs(t, err, ErrElementNotFound)
-				require.Nil(t, element)
-			})
-		})
-
-		t.Run("Remove", func(t *testing.T) {
-			t.Run("removes an existing element", func(t *testing.T) {
-				s := NewSet()
-				s.Add(element)
-				s.Remove(key)
-
-				element, err := s.Lookup(key)
-				require.ErrorIs(t, err, ErrElementNotFound)
-				require.Nil(t, element)
-			})
-
-			t.Run("does not panic for non-existing element", func(t *testing.T) {
-				s := NewSet()
-				require.NotPanics(t, func() {
-					s.Remove("non-existing")
-				})
-			})
-		})
-	})
-
 	t.Run("CRDT properties", func(t *testing.T) {
 		e1 := IDElement("element1")
 		e2 := IDElement("element2")
@@ -78,7 +33,7 @@ func TestSet(t *testing.T) {
 				C.Add(e1)
 				C.Add(e3)
 
-				replicate(A, B, C)
+				replicateSets(A, B, C)
 
 				a := A.List()
 				b := B.List()
@@ -109,7 +64,7 @@ func TestSet(t *testing.T) {
 				B.Add(e1)
 				A.Remove(e1.GetKey())
 
-				replicate(A, B)
+				replicateSets(A, B)
 
 				found, err := A.Lookup(e1.GetKey())
 				require.ErrorIs(t, err, ErrElementNotFound)
@@ -139,9 +94,10 @@ func TestSet(t *testing.T) {
 
 				A.Add(e1)
 				A.Remove(e1.GetKey())
+
 				B.Add(e1)
 
-				replicate(A, B)
+				replicateSets(A, B)
 
 				found, err := A.Lookup(e1.GetKey())
 				require.NoError(t, err)
@@ -155,22 +111,57 @@ func TestSet(t *testing.T) {
 				require.Equal(t, expected, B.List())
 			})
 		})
-
 	})
-}
-func sortElements(list []Element) {
-	sort.Slice(list, func(i, j int) bool {
-		return list[i].GetKey() < list[j].GetKey()
-	})
-}
 
-func replicate(sets ...Set) {
-	for _, to := range sets {
-		for _, from := range sets {
-			if from.mutex == to.mutex {
-				continue
-			}
-			to.Merge(from)
-		}
-	}
+	t.Run("Set operations", func(t *testing.T) {
+		key := "unqiue"
+		element := IDElement(key)
+
+		t.Run("Add/Lookup", func(t *testing.T) {
+			t.Run("added element can be retrieved", func(t *testing.T) {
+				s := NewSet()
+				s.Add(element)
+
+				retreived, err := s.Lookup(key)
+				require.NoError(t, err)
+				require.Equal(t, element, retreived)
+			})
+
+			t.Run("adding the same element twice does not panic", func(t *testing.T) {
+				s := NewSet()
+
+				require.NotPanics(t, func() {
+					s.Add(element)
+					s.Add(element)
+				})
+			})
+
+			t.Run("retrieving a non-existing element returns ErrElementNotFound", func(t *testing.T) {
+				s := NewSet()
+
+				element, err := s.Lookup("non-existing")
+				require.ErrorIs(t, err, ErrElementNotFound)
+				require.Nil(t, element)
+			})
+		})
+
+		t.Run("Remove", func(t *testing.T) {
+			t.Run("removes an existing element", func(t *testing.T) {
+				s := NewSet()
+				s.Add(element)
+				s.Remove(key)
+
+				element, err := s.Lookup(key)
+				require.ErrorIs(t, err, ErrElementNotFound)
+				require.Nil(t, element)
+			})
+
+			t.Run("does not panic for non-existing element", func(t *testing.T) {
+				s := NewSet()
+				require.NotPanics(t, func() {
+					s.Remove("non-existing")
+				})
+			})
+		})
+	})
 }
