@@ -33,4 +33,4 @@ Use `make test` command to run the tests.
 
 MIT License
 
-[Denis Rechkunov](https://pragmader.me) mail@pragmader.me
+[Denis Rechkunov](https://rdner.de) denis@rdner.de
