@@ -1,4 +1,4 @@
-module github.com/pragmader/crdt
+module github.com/rdner/crdt
 
 go 1.16
 
